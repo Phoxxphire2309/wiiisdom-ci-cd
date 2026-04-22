@@ -9,6 +9,8 @@ pipeline {
     TC_SERVER_URL      = credentials('TABLEAU_SERVER_URL')
     REPO               = 'Phoxxphire2309/wiiisdom-ci-cd'
     GIT_EXE            = 'C:\\Program Files\\Git\\bin\\git.exe'
+    KINESIS_EXE        = 'C:\\wiiisdom\\kinesis'
+    LICENSE_FILE       = 'C:\\wiiisdom\\license.key'
   }
 
   stages {
@@ -79,8 +81,10 @@ pipeline {
               continue
             }
 
+            echo "Running Wiiisdom tests for ${wb}..."
+
             def result = powershell(
-              script: "wiiisdom-ops run --workbook \"${wb}\" --test-file \"${testFile}\" --output-format json --output-file \"results_${name}.json\" --license \$env:WIIISDOM_LICENSE",
+              script: "& \$env:KINESIS_EXE run --workbook \"${wb}\" --test-file \"${testFile}\" --output-format json --output-file \"results_${name}.json\" --license-file \$env:LICENSE_FILE",
               returnStatus: true
             )
 
@@ -93,6 +97,8 @@ pipeline {
               } catch (e) {
                 failureDetails << "**${wb}**: Tests failed (could not parse report)"
               }
+            } else {
+              echo "Tests passed for ${wb}"
             }
           }
 
