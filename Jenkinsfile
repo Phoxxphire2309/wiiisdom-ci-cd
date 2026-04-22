@@ -24,12 +24,8 @@ pipeline {
       steps {
         powershell '''
           $sha = (git rev-parse HEAD).Trim()
-          $body = @{ state="pending"; context="wiiisdom-tests"; description="Wiiisdom tests running..." } | ConvertTo-Json
-          Invoke-RestMethod `
-            -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" `
-            -Method POST `
-            -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } `
-            -Body $body
+          $body = '{"state":"pending","context":"wiiisdom-tests","description":"Wiiisdom tests running..."}'
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
         '''
       }
     }
@@ -41,7 +37,7 @@ pipeline {
             script: '''
               $files = git diff --name-only HEAD~1 HEAD
               $workbooks = $files | Where-Object { $_ -match "\\.twbx?$" }
-              $workbooks -join " "
+              if ($workbooks) { $workbooks -join " " } else { "" }
             ''',
             returnStdout: true
           ).trim()
@@ -68,14 +64,7 @@ pipeline {
             }
 
             def result = powershell(
-              script: """
-                wiiisdom-ops run `
-                  --workbook "${wb}" `
-                  --test-file "${testFile}" `
-                  --output-format json `
-                  --output-file "results_${name}.json" `
-                  --license \$env:WIIISDOM_LICENSE
-              """,
+              script: "wiiisdom-ops run --workbook \"${wb}\" --test-file \"${testFile}\" --output-format json --output-file \"results_${name}.json\" --license \$env:WIIISDOM_LICENSE",
               returnStatus: true
             )
 
@@ -104,12 +93,7 @@ pipeline {
           $workbooks = $env:CHANGED_WORKBOOKS -split " "
           foreach ($wb in $workbooks) {
             Write-Host "Publishing $wb to Tableau Cloud..."
-            tabcmd publish "$wb" `
-              --server   "$env:TC_SERVER_URL" `
-              --site     "$env:TC_SITE_ID" `
-              --token-name   "$env:TC_TOKEN_NAME" `
-              --token-value  "$env:TC_TOKEN_SECRET" `
-              --overwrite
+            tabcmd publish "$wb" --server "$env:TC_SERVER_URL" --site "$env:TC_SITE_ID" --token-name "$env:TC_TOKEN_NAME" --token-value "$env:TC_TOKEN_SECRET" --overwrite
           }
         '''
       }
@@ -120,54 +104,26 @@ pipeline {
     success {
       powershell '''
         $sha = (git rev-parse HEAD).Trim()
-        $body = @{
-          state       = "success"
-          context     = "wiiisdom-tests"
-          description = "All Wiiisdom tests passed. Published to Tableau Cloud."
-        } | ConvertTo-Json
-        Invoke-RestMethod `
-          -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" `
-          -Method POST `
-          -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } `
-          -Body $body
+        $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
+        Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
       '''
     }
 
     failure {
       script {
-        def details = env.FAILURE_DETAILS ?: 'Pipeline failed — check Jenkins build logs for details.'
+        def details = (env.FAILURE_DETAILS ?: 'Pipeline failed — check Jenkins build logs.').replace('"', '\\"')
+        def sha = powershell(script: 'git rev-parse HEAD', returnStdout: true).trim()
+
         powershell """
-          \$sha = (git rev-parse HEAD).Trim()
-          \$body = @{
-            state       = "failure"
-            context     = "wiiisdom-tests"
-            description = "Wiiisdom tests FAILED. Merge blocked."
-          } | ConvertTo-Json
-          Invoke-RestMethod \`
-            -Uri "https://api.github.com/repos/\$env:REPO/statuses/\$sha" \`
-            -Method POST \`
-            -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } \`
-            -Body \$body
+          \$body = '{"state":"failure","context":"wiiisdom-tests","description":"Wiiisdom tests FAILED. Merge blocked."}'
+          Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/statuses/${sha}" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body \$body
         """
 
         if (env.CHANGE_ID) {
-          def comment = """## Wiiisdom Test Results: FAILED
-
-The following workbooks failed their Wiiisdom tests:
-
-${details}
-
-**This PR has NOT been merged.** Please fix the failing tests and push again.
-          """
+          def comment = "## Wiiisdom Test Results: FAILED\\n\\nThe following workbooks failed their Wiiisdom tests:\\n\\n${details}\\n\\n**This PR has NOT been merged.** Please fix the failing tests and push again."
           powershell """
-            \$body = @{ body = @'
-${comment}
-'@ } | ConvertTo-Json
-            Invoke-RestMethod \`
-              -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:CHANGE_ID/comments" \`
-              -Method POST \`
-              -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } \`
-              -Body \$body
+            \$body = '{"body":"${comment}"}'
+            Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:CHANGE_ID/comments" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body \$body
           """
         }
       }
