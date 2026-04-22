@@ -5,7 +5,7 @@ pipeline {
     REPO               = 'Phoxxphire2309/wiiisdom-ci-cd'
     GIT_EXE            = 'C:\\Program Files\\Git\\bin\\git.exe'
     KINESIS_EXE        = 'C:\\wiiisdom\\kinesis'
-    LICENSE_FILE       = 'C:\\wiiisdom\\license.key'
+    WORKSPACE_DIR      = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
   }
 
   stages {
@@ -42,7 +42,6 @@ pipeline {
     stage('Detect Changed Workbooks') {
       steps {
         script {
-          // Get changed workbooks as newline-separated list to handle spaces in filenames
           def raw = powershell(
             script: '''
               try {
@@ -61,7 +60,6 @@ pipeline {
             returnStdout: true
           ).trim()
 
-          // Store as newline-separated so spaces in filenames are preserved
           env.CHANGED_WORKBOOKS_RAW = raw
           def count = raw ? raw.split('\n').length : 0
           echo "Changed workbooks (${count}): ${raw}"
@@ -77,11 +75,13 @@ pipeline {
           def allPassed = true
           def failureDetails = []
 
+          // Create results directory
+          powershell 'New-Item -ItemType Directory -Force -Path "results" | Out-Null'
+
           for (wb in workbooks) {
             wb = wb.trim()
             if (!wb) continue
 
-            // Derive test file name from workbook name — strip path and extension
             def filename = wb.tokenize('/\\').last()
             def name = filename.replaceAll('\\.twbx?$', '')
             def testFile = "wiiisdom\\${name}.json"
@@ -96,22 +96,22 @@ pipeline {
 
             echo "Running Wiiisdom tests for ${wb}..."
 
-            def safeName = name.replaceAll('[^a-zA-Z0-9]', '_')
-            def resultFile = "results_${safeName}.json"
-
             def result = powershell(
-              script: "& \$env:KINESIS_EXE run --test-file \"${testFile}\" --output-format json --output-file \"${resultFile}\" --license-file \$env:LICENSE_FILE",
+              script: """
+                & \$env:KINESIS_EXE --path \"\$env:WORKSPACE_DIR\\wiiisdom\" --output \"\$env:WORKSPACE_DIR\\results\" --headless \"${name}\"
+              """,
               returnStatus: true
             )
 
             if (result != 0) {
               allPassed = false
+              // Try to read failure details from output report
+              def reportPath = "results\\${name}.json"
               try {
-                def report = readJSON file: resultFile
-                def msg = report?.summary?.failureMessage ?: 'Check results file for details'
-                failureDetails << "**${wb}**: ${msg}"
+                def reportText = readFile file: reportPath
+                failureDetails << "**${wb}**: ${reportText.take(200)}"
               } catch (e) {
-                failureDetails << "**${wb}**: Tests failed (could not parse report)"
+                failureDetails << "**${wb}**: Tests failed — check Jenkins logs for details"
               }
             } else {
               echo "Tests passed for ${wb}"
