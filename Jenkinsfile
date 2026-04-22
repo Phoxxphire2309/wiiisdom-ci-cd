@@ -2,11 +2,6 @@ pipeline {
   agent any
 
   environment {
-    WIIISDOM_LICENSE   = credentials('WIIISDOM_LICENSE_KEY')
-    TC_TOKEN_NAME      = credentials('TABLEAU_CLOUD_TOKEN_NAME')
-    TC_TOKEN_SECRET    = credentials('TABLEAU_CLOUD_TOKEN_SECRET')
-    TC_SITE_ID         = credentials('TABLEAU_SITE_ID')
-    TC_SERVER_URL      = credentials('TABLEAU_SERVER_URL')
     REPO               = 'Phoxxphire2309/wiiisdom-ci-cd'
     GIT_EXE            = 'C:\\Program Files\\Git\\bin\\git.exe'
     KINESIS_EXE        = 'C:\\wiiisdom\\kinesis'
@@ -47,34 +42,52 @@ pipeline {
     stage('Detect Changed Workbooks') {
       steps {
         script {
-          env.CHANGED_WORKBOOKS = powershell(
+          // Get changed workbooks as newline-separated list to handle spaces in filenames
+          def raw = powershell(
             script: '''
               try {
                 $files = & $env:GIT_EXE diff --name-only HEAD~1 HEAD
                 $workbooks = $files | Where-Object { $_ -match "\\.twbx?$" }
-                if ($workbooks) { $workbooks -join " " } else { "" }
+                if ($workbooks) {
+                  $workbooks -join "`n"
+                } else {
+                  $all = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
+                  if ($all) { ($all | ForEach-Object { "workbooks\\" + $_.Name }) -join "`n" } else { "" }
+                }
               } catch {
                 ""
               }
             ''',
             returnStdout: true
           ).trim()
-          echo "Changed workbooks: ${env.CHANGED_WORKBOOKS}"
+
+          // Store as newline-separated so spaces in filenames are preserved
+          env.CHANGED_WORKBOOKS_RAW = raw
+          def count = raw ? raw.split('\n').length : 0
+          echo "Changed workbooks (${count}): ${raw}"
         }
       }
     }
 
     stage('Run Wiiisdom Tests') {
-      when { expression { env.CHANGED_WORKBOOKS?.trim() } }
+      when { expression { env.CHANGED_WORKBOOKS_RAW?.trim() } }
       steps {
         script {
-          def workbooks = env.CHANGED_WORKBOOKS.trim().split(' ')
+          def workbooks = env.CHANGED_WORKBOOKS_RAW.trim().split('\n')
           def allPassed = true
           def failureDetails = []
 
           for (wb in workbooks) {
-            def name = wb.tokenize('/').last().replaceAll('\\.twbx?', '')
+            wb = wb.trim()
+            if (!wb) continue
+
+            // Derive test file name from workbook name — strip path and extension
+            def filename = wb.tokenize('/\\').last()
+            def name = filename.replaceAll('\\.twbx?$', '')
             def testFile = "wiiisdom\\${name}.json"
+
+            echo "Processing workbook: ${wb}"
+            echo "Looking for test file: ${testFile}"
 
             if (!fileExists(testFile)) {
               echo "No test file found for ${wb} — skipping."
@@ -83,15 +96,18 @@ pipeline {
 
             echo "Running Wiiisdom tests for ${wb}..."
 
+            def safeName = name.replaceAll('[^a-zA-Z0-9]', '_')
+            def resultFile = "results_${safeName}.json"
+
             def result = powershell(
-              script: "& \$env:KINESIS_EXE run --workbook \"${wb}\" --test-file \"${testFile}\" --output-format json --output-file \"results_${name}.json\" --license-file \$env:LICENSE_FILE",
+              script: "& \$env:KINESIS_EXE run --test-file \"${testFile}\" --output-format json --output-file \"${resultFile}\" --license-file \$env:LICENSE_FILE",
               returnStatus: true
             )
 
             if (result != 0) {
               allPassed = false
               try {
-                def report = readJSON file: "results_${name}.json"
+                def report = readJSON file: resultFile
                 def msg = report?.summary?.failureMessage ?: 'Check results file for details'
                 failureDetails << "**${wb}**: ${msg}"
               } catch (e) {
@@ -105,19 +121,6 @@ pipeline {
           env.ALL_PASSED      = allPassed ? 'true' : 'false'
           env.FAILURE_DETAILS = failureDetails.join('\n')
         }
-      }
-    }
-
-    stage('Publish to Tableau Cloud') {
-      when { expression { env.ALL_PASSED == 'true' } }
-      steps {
-        powershell '''
-          $workbooks = $env:CHANGED_WORKBOOKS -split " "
-          foreach ($wb in $workbooks) {
-            Write-Host "Publishing $wb to Tableau Cloud..."
-            tabcmd publish "$wb" --server "$env:TC_SERVER_URL" --site "$env:TC_SITE_ID" --token-name "$env:TC_TOKEN_NAME" --token-value "$env:TC_TOKEN_SECRET" --overwrite
-          }
-        '''
       }
     }
   }
