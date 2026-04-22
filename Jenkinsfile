@@ -1,9 +1,8 @@
-// Jenkinsfile — Wiiisdom + Tableau Cloud CI/CD Pipeline (Windows Agent)
 pipeline {
   agent any
 
   environment {
-    GITHUB_TOKEN       = credentials('7de4d72f-958e-41ad-b987-ec15556bfcd2')
+    GITHUB_TOKEN       = credentials('GITHUB_TOKEN')
     WIIISDOM_LICENSE   = credentials('WIIISDOM_LICENSE_KEY')
     TC_TOKEN_NAME      = credentials('TABLEAU_CLOUD_TOKEN_NAME')
     TC_TOKEN_SECRET    = credentials('TABLEAU_CLOUD_TOKEN_SECRET')
@@ -21,12 +20,23 @@ pipeline {
       }
     }
 
+    stage('Get Commit SHA') {
+      steps {
+        script {
+          env.COMMIT_SHA = powershell(
+            script: '& $env:GIT_EXE rev-parse HEAD',
+            returnStdout: true
+          ).trim()
+          echo "Commit SHA: ${env.COMMIT_SHA}"
+        }
+      }
+    }
+
     stage('Set Pending Status') {
       steps {
         powershell '''
-          $sha = (& $env:GIT_EXE rev-parse HEAD).Trim()
           $body = '{"state":"pending","context":"wiiisdom-tests","description":"Wiiisdom tests running..."}'
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN_PSW"; "Content-Type"="application/json" } -Body $body
         '''
       }
     }
@@ -104,27 +114,24 @@ pipeline {
   post {
     success {
       powershell '''
-        $sha = (& $env:GIT_EXE rev-parse HEAD).Trim()
         $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
-        Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
+        Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN_PSW"; "Content-Type"="application/json" } -Body $body
       '''
     }
 
     failure {
       script {
-        def sha = bat(script: '"C:\\Program Files\\Git\\bin\\git.exe" rev-parse HEAD', returnStdout: true).trim()
         def details = (env.FAILURE_DETAILS ?: 'Pipeline failed — check Jenkins build logs.').replace('"', '\\"')
-
         powershell """
           \$body = '{"state":"failure","context":"wiiisdom-tests","description":"Wiiisdom tests FAILED. Merge blocked."}'
-          Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/statuses/${sha}" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body \$body
+          Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/statuses/\$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN_PSW"; "Content-Type"="application/json" } -Body \$body
         """
 
         if (env.CHANGE_ID) {
           def comment = "## Wiiisdom Test Results: FAILED\\n\\nThe following workbooks failed:\\n\\n${details}\\n\\n**This PR has NOT been merged.**"
           powershell """
             \$body = '{"body":"${comment}"}'
-            Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:CHANGE_ID/comments" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body \$body
+            Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:CHANGE_ID/comments" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN_PSW"; "Content-Type"="application/json" } -Body \$body
           """
         }
       }
