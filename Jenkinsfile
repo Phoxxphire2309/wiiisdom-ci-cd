@@ -4,7 +4,7 @@ pipeline {
   environment {
     REPO               = 'Phoxxphire2309/wiiisdom-ci-cd'
     GIT_EXE            = 'C:\\Program Files\\Git\\bin\\git.exe'
-    KINESIS_EXE        = 'C:\\wiiisdom\\kinesis'
+    KINESIS_EXE        = 'C:\\Users\\Administrator\\Downloads\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\kinesis-cli\\kinesis'
     WORKSPACE_DIR      = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
   }
 
