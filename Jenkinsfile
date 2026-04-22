@@ -36,7 +36,7 @@ pipeline {
       steps {
         powershell '''
           $body = '{"state":"pending","context":"wiiisdom-tests","description":"Wiiisdom tests running..."}'
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN_PSW"; "Content-Type"="application/json" } -Body $body
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
         '''
       }
     }
