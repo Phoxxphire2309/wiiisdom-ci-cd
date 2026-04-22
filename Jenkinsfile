@@ -10,6 +10,7 @@ pipeline {
     TC_SITE_ID         = credentials('TABLEAU_SITE_ID')
     TC_SERVER_URL      = credentials('TABLEAU_SERVER_URL')
     REPO               = 'Phoxxphire2309/wiiisdom-ci-cd'
+    GIT_EXE            = 'C:\\Program Files\\Git\\bin\\git.exe'
   }
 
   stages {
@@ -23,7 +24,7 @@ pipeline {
     stage('Set Pending Status') {
       steps {
         powershell '''
-          $sha = (git rev-parse HEAD).Trim()
+          $sha = (& $env:GIT_EXE rev-parse HEAD).Trim()
           $body = '{"state":"pending","context":"wiiisdom-tests","description":"Wiiisdom tests running..."}'
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
         '''
@@ -35,7 +36,7 @@ pipeline {
         script {
           env.CHANGED_WORKBOOKS = powershell(
             script: '''
-              $files = git diff --name-only HEAD~1 HEAD
+              $files = & $env:GIT_EXE diff --name-only HEAD~1 HEAD
               $workbooks = $files | Where-Object { $_ -match "\\.twbx?$" }
               if ($workbooks) { $workbooks -join " " } else { "" }
             ''',
@@ -103,7 +104,7 @@ pipeline {
   post {
     success {
       powershell '''
-        $sha = (git rev-parse HEAD).Trim()
+        $sha = (& $env:GIT_EXE rev-parse HEAD).Trim()
         $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
         Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$sha" -Method POST -Headers @{ Authorization="token $env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body $body
       '''
@@ -111,8 +112,8 @@ pipeline {
 
     failure {
       script {
+        def sha = bat(script: '"C:\\Program Files\\Git\\bin\\git.exe" rev-parse HEAD', returnStdout: true).trim()
         def details = (env.FAILURE_DETAILS ?: 'Pipeline failed — check Jenkins build logs.').replace('"', '\\"')
-        def sha = powershell(script: 'git rev-parse HEAD', returnStdout: true).trim()
 
         powershell """
           \$body = '{"state":"failure","context":"wiiisdom-tests","description":"Wiiisdom tests FAILED. Merge blocked."}'
@@ -120,7 +121,7 @@ pipeline {
         """
 
         if (env.CHANGE_ID) {
-          def comment = "## Wiiisdom Test Results: FAILED\\n\\nThe following workbooks failed their Wiiisdom tests:\\n\\n${details}\\n\\n**This PR has NOT been merged.** Please fix the failing tests and push again."
+          def comment = "## Wiiisdom Test Results: FAILED\\n\\nThe following workbooks failed:\\n\\n${details}\\n\\n**This PR has NOT been merged.**"
           powershell """
             \$body = '{"body":"${comment}"}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:CHANGE_ID/comments" -Method POST -Headers @{ Authorization="token \$env:GITHUB_TOKEN"; "Content-Type"="application/json" } -Body \$body
