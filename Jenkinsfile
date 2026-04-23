@@ -103,9 +103,30 @@ pipeline {
                   env.PR_NUMBER = existingPR
                   echo "PR already exists: #${env.PR_NUMBER}"
                 } else {
-                  def workbookList = env.CHANGED_WORKBOOKS_RAW.trim().split('\n').collect { "- ${it.trim()}" }.join('\\n')
-                  def prTitle = "CI: ${branch} -> ${env.BASE_BRANCH}"
-                  def prBody = "## Automated CI/CD Pipeline\\n\\n**Branch:** ${branch}\\n**Base:** ${env.BASE_BRANCH}\\n**Triggered by:** Jenkins push event\\n\\n---\\n\\n### Workbooks to deploy\\n\\n${workbookList}\\n\\n---\\n\\n### What happens next\\n\\n- Wiiisdom tests will run against all changed workbooks\\n- If tests pass this PR will be automatically merged and workbooks published to Tableau Cloud\\n- If tests fail this PR will be closed with failure details\\n\\n---\\n*This PR was automatically created by Jenkins CI/CD*"
+                  def workbookList = env.CHANGED_WORKBOOKS_RAW.trim().split('\n').collect { "| :bar_chart: ${it.trim()} | :hourglass_flowing_sand: Pending |" }.join('\\n')
+                  def prTitle = ":rocket: CI: ${branch} -> ${env.BASE_BRANCH}"
+                  def prBody = ":robot: **Automated CI/CD Pipeline**\\n\\n---\\n\\n" +
+                    "| Detail | Value |\\n" +
+                    "|--------|-------|\\n" +
+                    "| :twisted_rightwards_arrows: Branch | \`${branch}\` |\\n" +
+                    "| :dart: Target | \`${env.BASE_BRANCH}\` |\\n" +
+                    "| :zap: Triggered by | Jenkins push event |\\n\\n" +
+                    "---\\n\\n" +
+                    "### :bar_chart: Workbooks Queued for Testing\\n\\n" +
+                    "| Workbook | Status |\\n" +
+                    "|----------|--------|\\n" +
+                    "${workbookList}\\n\\n" +
+                    "---\\n\\n" +
+                    "### :clipboard: Pipeline Steps\\n\\n" +
+                    "- :white_check_mark: Pull request created\\n" +
+                    "- :hourglass_flowing_sand: Wiiisdom tests running...\\n" +
+                    "- :soon: Results will be posted automatically\\n\\n" +
+                    "---\\n\\n" +
+                    "> :bulb: If tests **pass** this PR will be automatically merged\\n" +
+                    "> If tests **fail** this PR will be closed with full failure details\\n\\n" +
+                    "---\\n" +
+                    "*:jenkins: This PR was automatically created by Jenkins CI/CD*"
+
                   def prJson = "{\"title\":\"${prTitle}\",\"body\":\"${prBody}\",\"head\":\"${branch}\",\"base\":\"${env.BASE_BRANCH}\"}"
 
                   def prNumber = powershell(
@@ -185,19 +206,19 @@ pipeline {
               allPassed = false
               try {
                 def reportText = readFile file: "results\\${name}.json"
-                failureDetails << "| ${wb} | FAILED | ${reportText.take(150)} |"
+                failureDetails << "| :bar_chart: \`${wb}\` | :x: Failed | ${reportText.take(150)} |"
               } catch (e) {
-                failureDetails << "| ${wb} | FAILED | Check Jenkins logs for details |"
+                failureDetails << "| :bar_chart: \`${wb}\` | :x: Failed | Check Jenkins logs for details |"
               }
             } else {
-              passedList << "| ${wb} | PASSED | Published to Tableau Cloud |"
+              passedList << "| :bar_chart: \`${wb}\` | :white_check_mark: Passed |"
               echo "Tests passed for ${wb}"
             }
           }
 
           env.ALL_PASSED      = allPassed ? 'true' : 'false'
-          env.FAILURE_DETAILS = failureDetails.join('\n')
-          env.PASSED_DETAILS  = passedList.join('\n')
+          env.FAILURE_DETAILS = failureDetails.join('\\n')
+          env.PASSED_DETAILS  = passedList.join('\\n')
         }
       }
     }
@@ -216,15 +237,26 @@ pipeline {
         }
         withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
           powershell '''
-            $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
+            $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed."}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GH_TOKEN"; "Content-Type"="application/json" } -Body $body
           '''
 
           if (env.PR_NUMBER) {
             def branch = env.CURRENT_BRANCH ?: 'development'
-            def passed = env.PASSED_DETAILS ?: '| No workbooks changed | - | - |'
-            def successComment = "{\"body\":\"## Wiiisdom Tests Passed\\n\\nAll tests passed successfully. This PR has been automatically merged and workbooks published to Tableau Cloud.\\n\\n### Results\\n\\n| Workbook | Status | Action |\\n|----------|--------|--------|\\n${passed}\\n\\n---\\n*Automatically merged by Jenkins CI/CD*\"}"
-            def mergeBody = "{\"commit_title\":\"CI: ${branch} merged after Wiiisdom tests passed\",\"commit_message\":\"All Wiiisdom tests passed. Workbooks published to Tableau Cloud.\",\"merge_method\":\"merge\"}"
+            def passed = env.PASSED_DETAILS ?: '| :bar_chart: No workbooks changed | - |'
+            def successComment = "{\"body\":" +
+              "\":white_check_mark: **Wiiisdom Tests Passed**\\n\\n---\\n\\n" +
+              "All tests completed successfully. This PR has been automatically merged.\\n\\n" +
+              "### :trophy: Results\\n\\n" +
+              "| Workbook | Status |\\n" +
+              "|----------|--------|\\n" +
+              "${passed}\\n\\n" +
+              "---\\n\\n" +
+              "> :tada: Great work! All workbooks passed their Wiiisdom tests.\\n\\n" +
+              "---\\n" +
+              "*:robot: Automatically merged by Jenkins CI/CD*\"}"
+
+            def mergeBody = "{\"commit_title\":\":rocket: CI: ${branch} -> ${env.BASE_BRANCH} — Wiiisdom tests passed\",\"commit_message\":\"All Wiiisdom tests passed successfully.\",\"merge_method\":\"merge\"}"
 
             echo "Merging PR #${env.PR_NUMBER}..."
             powershell """
@@ -257,7 +289,7 @@ pipeline {
           return
         }
         withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
-          def details = env.FAILURE_DETAILS ?: '| Unknown | FAILED | Check Jenkins build logs |'
+          def details = env.FAILURE_DETAILS ?: '| :bar_chart: Unknown | :x: Failed | Check Jenkins build logs |'
           def branch = env.CURRENT_BRANCH ?: 'development'
 
           powershell """
@@ -266,7 +298,21 @@ pipeline {
           """
 
           if (env.PR_NUMBER) {
-            def failComment = "{\"body\":\"## Wiiisdom Tests Failed\\n\\nOne or more Wiiisdom tests failed. This PR has been closed automatically.\\n\\n### Failed Workbooks\\n\\n| Workbook | Status | Details |\\n|----------|--------|---------|\\n${details}\\n\\n### Next Steps\\n\\n1. Review the failure details above\\n2. Fix the failing tests or workbook\\n3. Push your changes to ${branch} to trigger a new pipeline run\\n\\n---\\n*Automatically closed by Jenkins CI/CD*\"}"
+            def failComment = "{\"body\":" +
+              "\":x: **Wiiisdom Tests Failed**\\n\\n---\\n\\n" +
+              "One or more Wiiisdom tests failed. This PR has been closed automatically.\\n\\n" +
+              "### :mag: Failed Workbooks\\n\\n" +
+              "| Workbook | Status | Details |\\n" +
+              "|----------|--------|---------|\\n" +
+              "${details}\\n\\n" +
+              "---\\n\\n" +
+              "### :wrench: Next Steps\\n\\n" +
+              "1. :eyes: Review the failure details above\\n" +
+              "2. :hammer: Fix the failing tests or workbook\\n" +
+              "3. :arrow_up: Push your changes to \`${branch}\` to trigger a new pipeline run\\n\\n" +
+              "> :warning: This PR has been closed. A new PR will be created automatically on your next push.\\n\\n" +
+              "---\\n" +
+              "*:robot: Automatically closed by Jenkins CI/CD*\"}"
 
             echo "Closing PR #${env.PR_NUMBER} due to test failure..."
             powershell """
