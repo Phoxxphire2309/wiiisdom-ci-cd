@@ -104,12 +104,12 @@ pipeline {
                   echo "PR already exists: #${env.PR_NUMBER}"
                 } else {
                   def workbookList = env.CHANGED_WORKBOOKS_RAW.trim().split('\n').collect { "| :bar_chart: ${it.trim()} | :hourglass_flowing_sand: Pending |" }.join('\\n')
-                  def prTitle = ":rocket: CI: ${branch} -> ${env.BASE_BRANCH}"
+                  def prTitle = "CI: ${branch} -> ${env.BASE_BRANCH}"
                   def prBody = ":robot: **Automated CI/CD Pipeline**\\n\\n---\\n\\n" +
                     "| Detail | Value |\\n" +
                     "|--------|-------|\\n" +
-                    "| :twisted_rightwards_arrows: Branch | '${branch}' |\\n" +
-                    "| :dart: Target | '${env.BASE_BRANCH}' |\\n" +
+                    "| :twisted_rightwards_arrows: Branch | ${branch} |\\n" +
+                    "| :dart: Target | ${env.BASE_BRANCH} |\\n" +
                     "| :zap: Triggered by | Jenkins push event |\\n\\n" +
                     "---\\n\\n" +
                     "### :bar_chart: Workbooks Queued for Testing\\n\\n" +
@@ -126,11 +126,12 @@ pipeline {
                     "> If tests **fail** this PR will be closed with full failure details\\n\\n" +
                     "---\\n" +
                     "*:robot: This PR was automatically created by Jenkins CI/CD*"
-                  def prJson = "{\"title\":\"${prTitle}\",\"body\":\"${prBody}\",\"head\":\"${branch}\",\"base\":\"${env.BASE_BRANCH}\"}"
+
+                  writeFile file: 'pr_body.json', text: "{\"title\":\"${prTitle}\",\"body\":\"${prBody}\",\"head\":\"${branch}\",\"base\":\"${env.BASE_BRANCH}\"}"
 
                   def prNumber = powershell(
                     script: """
-                      \$body = '${prJson}'
+                      \$body = Get-Content 'pr_body.json' -Raw
                       \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
                       \$response.number
                     """,
@@ -243,8 +244,7 @@ pipeline {
           if (env.PR_NUMBER) {
             def branch = env.CURRENT_BRANCH ?: 'development'
             def passed = env.PASSED_DETAILS ?: '| :bar_chart: No workbooks changed | - |'
-            def successComment = "{\"body\":" +
-              "\":white_check_mark: **Wiiisdom Tests Passed**\\n\\n---\\n\\n" +
+            def successBody = ":white_check_mark: **Wiiisdom Tests Passed**\\n\\n---\\n\\n" +
               "All tests completed successfully. This PR has been automatically merged.\\n\\n" +
               "### :trophy: Results\\n\\n" +
               "| Workbook | Status |\\n" +
@@ -253,13 +253,17 @@ pipeline {
               "---\\n\\n" +
               "> :tada: Great work! All workbooks passed their Wiiisdom tests.\\n\\n" +
               "---\\n" +
-              "*:robot: Automatically merged by Jenkins CI/CD*\"}"
+              "*:robot: Automatically merged by Jenkins CI/CD*"
 
-            def mergeBody = "{\"commit_title\":\":rocket: CI: ${branch} -> ${env.BASE_BRANCH} - Wiiisdom tests passed\",\"commit_message\":\"All Wiiisdom tests passed successfully.\",\"merge_method\":\"merge\"}"
+            def mergeTitle = "CI: ${branch} -> ${env.BASE_BRANCH} - Wiiisdom tests passed"
+
+            writeFile file: 'success_comment.json', text: "{\"body\":\"${successBody}\"}"
+            writeFile file: 'merge_body.json', text: "{\"commit_title\":\"${mergeTitle}\",\"commit_message\":\"All Wiiisdom tests passed successfully.\",\"merge_method\":\"merge\"}"
 
             echo "Merging PR #${env.PR_NUMBER}..."
             powershell """
-              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body '${successComment}'
+              \$comment = Get-Content 'success_comment.json' -Raw
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
 
               try {
                 Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/update-branch" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body '{}'
@@ -269,7 +273,8 @@ pipeline {
                 Write-Host "Branch already up to date"
               }
 
-              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/merge" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body '${mergeBody}'
+              \$merge = Get-Content 'merge_body.json' -Raw
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/merge" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$merge
             """
             echo "PR #${env.PR_NUMBER} merged successfully"
           }
@@ -297,8 +302,7 @@ pipeline {
           """
 
           if (env.PR_NUMBER) {
-            def failComment = "{\"body\":" +
-              "\":x: **Wiiisdom Tests Failed**\\n\\n---\\n\\n" +
+            def failBody = ":x: **Wiiisdom Tests Failed**\\n\\n---\\n\\n" +
               "One or more Wiiisdom tests failed. This PR has been closed automatically.\\n\\n" +
               "### :mag: Failed Workbooks\\n\\n" +
               "| Workbook | Status | Details |\\n" +
@@ -308,14 +312,18 @@ pipeline {
               "### :wrench: Next Steps\\n\\n" +
               "1. :eyes: Review the failure details above\\n" +
               "2. :hammer: Fix the failing tests or workbook\\n" +
-              "3. :arrow_up: Push your changes to '${branch}' to trigger a new pipeline run\\n\\n" +
+              "3. :arrow_up: Bump the version and push to ${branch} to trigger a new pipeline run\\n\\n" +
               "> :warning: This PR has been closed. A new PR will be created automatically on your next push.\\n\\n" +
               "---\\n" +
-              "*:robot: Automatically closed by Jenkins CI/CD*\"}"
+              "*:robot: Automatically closed by Jenkins CI/CD*"
+
+            writeFile file: 'fail_comment.json', text: "{\"body\":\"${failBody}\"}"
 
             echo "Closing PR #${env.PR_NUMBER} due to test failure..."
             powershell """
-              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body '${failComment}'
+              \$comment = Get-Content 'fail_comment.json' -Raw
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
+
               \$close = '{"state":"closed"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER" -Method PATCH -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$close
             """
