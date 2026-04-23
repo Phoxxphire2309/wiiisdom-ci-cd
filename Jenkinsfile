@@ -62,7 +62,7 @@ pipeline {
                 $workbooks = $allChanged | Sort-Object -Unique | Where-Object {
                   $_ -like "workbooks*" -and (
                     $_ -like "*.twb" -or $_ -like "*.twbx"
-                  ) -and $_ -match " v\d+\.\d+\.\d+"
+                  ) -and $_ -like "* v*.*.*"
                 }
 
                 if ($workbooks) { $workbooks -join "`n" } else { "" }
