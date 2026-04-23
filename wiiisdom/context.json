@@ -1,0 +1,14 @@
+{
+    "context-variables": {
+        "TABLEAU_URL": "https://10ax.online.tableau.com",
+        "TABLEAU_USER": "ryan.alexander@interworks.co.uk",
+        "TABLEAU_SITE": "iweu",
+        "AUTHENTICATION_METHOD": "Connected App",
+        "CONNECTED_APP_ID": "e13e38621d9a3a27c2c604abe4c972a0;DicIDfMLtQndw5r0Oiywdi7zCdHtD9XBNyKIUmlJS4AKhNcs;encrypted",
+        "CONNECTED_APP_SECRET": "7c8c30658ec53b2230508ccfeb7f4ca4;/2QlDT2ozzuhaHaMy2VGunZFAJQ7criub9xtNJZrUyIwcpgW;encrypted",
+        "SECRET_VALUE": "2a7ece2500e5374d3860825f61f449cc;9hGaOXKqYyU770qSm+pWeoUiflVbJ6/sjjIUl3S8AHZYZiNloxvGpJfo4jQ=;encrypted",
+        "PERSONAL_ACCESS_TOKEN": "b1b13d30e2041663635ebe6c117c0795;4p28eSurrBfqWjmzDsiw9yxC6BQhMNmMRgnQ7doAf2phhMUCKju5i/EMwAnuMVXpPjUioLjrSPDS;encrypted",
+        "PERSONAL_ACCESS_TOKEN_NAME": "wiiisdom",
+        "ENCRYPTED_VARIABLES_LIST": []
+    }
+}

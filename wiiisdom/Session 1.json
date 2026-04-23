@@ -1,0 +1,48 @@
+{
+  "type": "functional",
+  "name": "Session 1",
+  "description": "",
+  "tasks": [
+    {
+      "type": "login_tableau",
+      "name": "Login to Tableau",
+      "disabled": false
+    },
+    {
+      "type": "viz_open",
+      "disabled": false,
+      "name": "Open Viz",
+      "url": "[\"{{TABLEAU_URL}}/t/{{TABLEAU_SITE}}/views/FHLBSession1/MonthlyKPIOverview\"]"
+    },
+    {
+      "type": "set_filter_list",
+      "disabled": false,
+      "name": "Set Filter - List",
+      "select-all": false,
+      "target-worksheet": "Completion Rate by Region",
+      "target": "Region",
+      "values": [
+        "Central"
+      ]
+    },
+    {
+      "type": "publish_tableau",
+      "disabled": false,
+      "tableau-server-url": "{{TABLEAU_URL}}",
+      "tableau-server-user": "{{TABLEAU_USER}}",
+      "tableau-server-password": "********",
+      "site-id": "{{TABLEAU_SITE}}",
+      "project": "{{TABLEAU_PROJECT}}",
+      "target-context": "-- Active Context --",
+      "overwrite": true,
+      "name": "Publish to Tableau",
+      "source-doc-location": "tableau-server",
+      "source-doc-type": "workbook",
+      "tabbed": false,
+      "useRemoteQueryAgent": false,
+      "source-doc-name": "[\"FHLB\",\"FHLB Session 1\"]",
+      "target-doc-name": "FHLB Session 1",
+      "target-project": "[\"default\"]"
+    }
+  ]
+}
