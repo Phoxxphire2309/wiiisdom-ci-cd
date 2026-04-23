@@ -43,7 +43,7 @@ pipeline {
                 def existingPR = powershell(
                   script: """
                     try {
-                      \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls?head=Phoxxphire2309:${branch}&base=\$env:BASE_BRANCH&state=open" -Method GET -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" }
+                      \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls?head=Phoxxphire2309:${branch}&base=${env.BASE_BRANCH}&state=open" -Method GET -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" }
                       if (\$response.Count -gt 0) { \$response[0].number } else { "" }
                     } catch { "" }
                   """,
@@ -56,7 +56,7 @@ pipeline {
                 } else {
                   def prNumber = powershell(
                     script: """
-                      \$body = '{"title":"Automated: ${branch}","body":"Automatically created by Jenkins pipeline. Wiiisdom tests running...","head":"${branch}","base":"\$env:BASE_BRANCH"}'
+                      \$body = '{"title":"Automated: ${branch}","body":"Automatically created by Jenkins pipeline. Wiiisdom tests running...","head":"${branch}","base":"${env.BASE_BRANCH}"}'
                       \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
                       \$response.number
                     """,
@@ -182,11 +182,9 @@ pipeline {
           if (env.PR_NUMBER) {
             echo "Merging PR #${env.PR_NUMBER}..."
             powershell """
-              # Comment on PR
               \$comment = '{"body":"## Wiiisdom Tests: PASSED ✅\\n\\nAll tests passed. Merging automatically."}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
 
-              # Merge the PR
               \$merge = '{"commit_title":"Auto-merged by Jenkins after Wiiisdom tests passed","merge_method":"merge"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/merge" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$merge
             """
@@ -211,11 +209,9 @@ pipeline {
           if (env.PR_NUMBER) {
             echo "Closing PR #${env.PR_NUMBER} due to test failure..."
             powershell """
-              # Add failure comment
               \$comment = '{"body":"## Wiiisdom Tests: FAILED ❌\\n\\nThe following workbooks failed their tests:\\n\\n${details}\\n\\n**This PR has been closed. Please fix the failing tests and push again.**"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
 
-              # Close the PR
               \$close = '{"state":"closed"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER" -Method PATCH -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$close
             """
