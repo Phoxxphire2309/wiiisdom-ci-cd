@@ -32,8 +32,13 @@ pipeline {
             script: '& $env:GIT_EXE log -1 --pretty=%B',
             returnStdout: true
           ).trim()
-          if (lastMessage.contains('[skip ci]')) {
-            echo "Skipping pipeline — skip ci commit detected"
+          echo "Commit message: ${lastMessage}"
+
+          if (lastMessage.contains('[skip ci]') ||
+              lastMessage.startsWith('Merge branch') ||
+              lastMessage.startsWith('Merge remote-tracking branch') ||
+              lastMessage.startsWith('Merge pull request')) {
+            echo "Skipping pipeline — merge or skip ci commit detected"
             env.SKIP_CI = 'true'
           } else {
             env.SKIP_CI = 'false'
