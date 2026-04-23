@@ -26,6 +26,87 @@ pipeline {
             returnStdout: true
           ).trim()
           echo "Commit SHA: ${env.COMMIT_SHA}"
+
+          // Skip pipeline if this is a checksums-only commit from Jenkins
+          def lastMessage = powershell(
+            script: '& $env:GIT_EXE log -1 --pretty=%B',
+            returnStdout: true
+          ).trim()
+          if (lastMessage.contains('[skip ci]')) {
+            echo "Skipping pipeline — checksums update commit detected"
+            currentBuild.result = 'SUCCESS'
+            error('skip')
+          }
+        }
+      }
+    }
+
+    stage('Generate and Compare Checksums') {
+      steps {
+        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
+          script {
+            def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
+            env.CURRENT_BRANCH = branch
+
+            def raw = powershell(
+              script: '''
+                $changedWorkbooks = [System.Collections.Generic.List[string]]::new()
+
+                # Get all current workbooks
+                $workbooks = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
+                if (-not $workbooks) {
+                  Write-Output ""
+                  exit 0
+                }
+
+                # Load existing checksums if they exist
+                $oldMap = @{}
+                if (Test-Path "checksums.txt") {
+                  Get-Content "checksums.txt" | ForEach-Object {
+                    $parts = $_ -split "\s+", 2
+                    if ($parts.Count -eq 2) { $oldMap[$parts[1].Trim()] = $parts[0].Trim() }
+                  }
+                }
+
+                # Compute new checksums and compare
+                $newLines = @()
+                foreach ($wb in $workbooks) {
+                  $hash = (Get-FileHash $wb.FullName -Algorithm SHA256).Hash.ToLower()
+                  $path = "workbooks/" + $wb.Name
+                  $newLines += "$hash  $path"
+
+                  # Check if changed or new
+                  if (-not $oldMap.ContainsKey($path) -or $oldMap[$path] -ne $hash) {
+                    $changedWorkbooks.Add($path)
+                  }
+                }
+
+                # Write updated checksums file
+                $newLines | Set-Content "checksums.txt"
+
+                if ($changedWorkbooks.Count -gt 0) { $changedWorkbooks -join "`n" } else { "" }
+              ''',
+              returnStdout: true
+            ).trim()
+
+            env.CHANGED_WORKBOOKS_RAW = raw
+            def count = raw ? raw.split('\n').length : 0
+            echo "Changed workbooks (${count}): ${raw}"
+
+            // Commit updated checksums back to repo
+            powershell """
+              & \$env:GIT_EXE config user.email "jenkins@ci"
+              & \$env:GIT_EXE config user.name "Jenkins CI"
+              & \$env:GIT_EXE add checksums.txt
+              \$status = & \$env:GIT_EXE status --porcelain
+              if (\$status) {
+                & \$env:GIT_EXE commit -m "ci: update checksums [skip ci]"
+                & \$env:GIT_EXE push https://\$env:GH_TOKEN@github.com/\$env:REPO.git HEAD:${branch}
+              } else {
+                Write-Host "No checksum changes to commit"
+              }
+            """
+          }
         }
       }
     }
@@ -35,9 +116,7 @@ pipeline {
         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
           withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
             script {
-              def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
-              env.CURRENT_BRANCH = branch
-              echo "Current branch: ${branch}"
+              def branch = env.CURRENT_BRANCH ?: 'development'
 
               if (branch != env.BASE_BRANCH) {
                 // Check if PR already exists
@@ -82,34 +161,6 @@ pipeline {
             $body = '{"state":"pending","context":"wiiisdom-tests","description":"Wiiisdom tests running..."}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GH_TOKEN"; "Content-Type"="application/json" } -Body $body
           '''
-        }
-      }
-    }
-
-    stage('Detect Changed Workbooks') {
-      steps {
-        script {
-          def raw = powershell(
-            script: '''
-              try {
-                $files = & $env:GIT_EXE diff --name-only HEAD~1 HEAD
-                $workbooks = $files | Where-Object { $_ -match "\\.twbx?$" }
-                if ($workbooks) {
-                  $workbooks -join "`n"
-                } else {
-                  $all = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
-                  if ($all) { ($all | ForEach-Object { "workbooks\\" + $_.Name }) -join "`n" } else { "" }
-                }
-              } catch {
-                ""
-              }
-            ''',
-            returnStdout: true
-          ).trim()
-
-          env.CHANGED_WORKBOOKS_RAW = raw
-          def count = raw ? raw.split('\n').length : 0
-          echo "Changed workbooks (${count}): ${raw}"
         }
       }
     }
@@ -226,6 +277,10 @@ pipeline {
           }
         }
       }
+    }
+
+    aborted {
+      echo "Pipeline skipped — no changes detected or skip ci commit"
     }
   }
 }
