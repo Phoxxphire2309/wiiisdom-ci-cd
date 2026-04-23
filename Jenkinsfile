@@ -27,7 +27,6 @@ pipeline {
           ).trim()
           echo "Commit SHA: ${env.COMMIT_SHA}"
 
-          // Skip pipeline if this is a checksums-only commit from Jenkins
           def lastMessage = powershell(
             script: '& $env:GIT_EXE log -1 --pretty=%B',
             returnStdout: true
@@ -52,36 +51,31 @@ pipeline {
               script: '''
                 $changedWorkbooks = [System.Collections.Generic.List[string]]::new()
 
-                # Get all current workbooks
                 $workbooks = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
                 if (-not $workbooks) {
                   Write-Output ""
                   exit 0
                 }
 
-                # Load existing checksums if they exist
                 $oldMap = @{}
                 if (Test-Path "checksums.txt") {
                   Get-Content "checksums.txt" | ForEach-Object {
-                    $parts = $_ -split "\s+", 2
+                    $parts = $_ -split " {2}", 2
                     if ($parts.Count -eq 2) { $oldMap[$parts[1].Trim()] = $parts[0].Trim() }
                   }
                 }
 
-                # Compute new checksums and compare
                 $newLines = @()
                 foreach ($wb in $workbooks) {
                   $hash = (Get-FileHash $wb.FullName -Algorithm SHA256).Hash.ToLower()
                   $path = "workbooks/" + $wb.Name
                   $newLines += "$hash  $path"
 
-                  # Check if changed or new
                   if (-not $oldMap.ContainsKey($path) -or $oldMap[$path] -ne $hash) {
                     $changedWorkbooks.Add($path)
                   }
                 }
 
-                # Write updated checksums file
                 $newLines | Set-Content "checksums.txt"
 
                 if ($changedWorkbooks.Count -gt 0) { $changedWorkbooks -join "`n" } else { "" }
@@ -93,7 +87,6 @@ pipeline {
             def count = raw ? raw.split('\n').length : 0
             echo "Changed workbooks (${count}): ${raw}"
 
-            // Commit updated checksums back to repo
             powershell """
               & \$env:GIT_EXE config user.email "jenkins@ci"
               & \$env:GIT_EXE config user.name "Jenkins CI"
@@ -119,7 +112,6 @@ pipeline {
               def branch = env.CURRENT_BRANCH ?: 'development'
 
               if (branch != env.BASE_BRANCH) {
-                // Check if PR already exists
                 def existingPR = powershell(
                   script: """
                     try {
@@ -227,13 +219,11 @@ pipeline {
     success {
       withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
         script {
-          // Post success status
           powershell '''
             $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GH_TOKEN"; "Content-Type"="application/json" } -Body $body
           '''
 
-          // Merge and close PR if one was created
           if (env.PR_NUMBER) {
             def branch = env.CURRENT_BRANCH ?: 'development'
             def passed = env.PASSED_DETAILS ?: '| No workbooks changed | - | - |'
@@ -257,13 +247,11 @@ pipeline {
           def details = env.FAILURE_DETAILS ?: '| Unknown | :x: Failed | Check Jenkins build logs |'
           def branch = env.CURRENT_BRANCH ?: 'development'
 
-          // Post failure status
           powershell """
             \$body = '{"state":"failure","context":"wiiisdom-tests","description":"Wiiisdom tests FAILED. Merge blocked."}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/statuses/\$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
           """
 
-          // Comment on PR and close it if one was created
           if (env.PR_NUMBER) {
             echo "Closing PR #${env.PR_NUMBER} due to test failure..."
             powershell """
@@ -280,7 +268,7 @@ pipeline {
     }
 
     aborted {
-      echo "Pipeline skipped — no changes detected or skip ci commit"
+      echo "Pipeline skipped — checksums only commit or no changes detected"
     }
   }
 }
