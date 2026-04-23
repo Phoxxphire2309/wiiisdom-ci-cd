@@ -32,40 +32,42 @@ pipeline {
 
     stage('Create Pull Request') {
       steps {
-        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
-          script {
-            def branch = powershell(
-              script: '& $env:GIT_EXE rev-parse --abbrev-ref HEAD',
-              returnStdout: true
-            ).trim()
-            echo "Current branch: ${branch}"
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+          withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
+            script {
+              def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
+              echo "Current branch: ${branch}"
 
-            // Only create PR if not already on base branch
-            if (branch != env.BASE_BRANCH) {
-              def prBody = """
-                {
-                  "title": "Automated: ${branch}",
-                  "body": "Automatically created by Jenkins pipeline. Wiiisdom tests running...",
-                  "head": "${branch}",
-                  "base": "${env.BASE_BRANCH}"
+              if (branch != env.BASE_BRANCH) {
+                // Check if PR already exists
+                def existingPR = powershell(
+                  script: """
+                    try {
+                      \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls?head=Phoxxphire2309:${branch}&base=\$env:BASE_BRANCH&state=open" -Method GET -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" }
+                      if (\$response.Count -gt 0) { \$response[0].number } else { "" }
+                    } catch { "" }
+                  """,
+                  returnStdout: true
+                ).trim()
+
+                if (existingPR) {
+                  env.PR_NUMBER = existingPR
+                  echo "PR already exists: #${env.PR_NUMBER}"
+                } else {
+                  def prNumber = powershell(
+                    script: """
+                      \$body = '{"title":"Automated: ${branch}","body":"Automatically created by Jenkins pipeline. Wiiisdom tests running...","head":"${branch}","base":"\$env:BASE_BRANCH"}'
+                      \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
+                      \$response.number
+                    """,
+                    returnStdout: true
+                  ).trim()
+                  env.PR_NUMBER = prNumber
+                  echo "Created PR #${env.PR_NUMBER}"
                 }
-              """
-              def prResponse = powershell(
-                script: """
-                  \$body = '{ "title": "Automated: ${branch}", "body": "Automatically created by Jenkins pipeline. Wiiisdom tests running...", "head": "${branch}", "base": "${env.BASE_BRANCH}" }'
-                  \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
-                  \$response.number
-                """,
-                returnStdout: true
-              ).trim()
-
-              // Handle case where PR already exists
-              if (prResponse) {
-                env.PR_NUMBER = prResponse
-                echo "Created PR #${env.PR_NUMBER}"
+              } else {
+                echo "On base branch — skipping PR creation"
               }
-            } else {
-              echo "On base branch — skipping PR creation"
             }
           }
         }
@@ -180,7 +182,7 @@ pipeline {
           if (env.PR_NUMBER) {
             echo "Merging PR #${env.PR_NUMBER}..."
             powershell """
-              # Add success comment
+              # Comment on PR
               \$comment = '{"body":"## Wiiisdom Tests: PASSED ✅\\n\\nAll tests passed. Merging automatically."}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
 
