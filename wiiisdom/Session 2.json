@@ -5,7 +5,7 @@
   "tasks": [
     {
       "type": "login_tableau",
-      "name": "Login to Tableau",
+      "name": "Login to Tableau Test",
       "disabled": false
     },
     {
