@@ -108,8 +108,8 @@ pipeline {
                   def prBody = ":robot: **Automated CI/CD Pipeline**\\n\\n---\\n\\n" +
                     "| Detail | Value |\\n" +
                     "|--------|-------|\\n" +
-                    "| :twisted_rightwards_arrows: Branch | \`${branch}\` |\\n" +
-                    "| :dart: Target | \`${env.BASE_BRANCH}\` |\\n" +
+                    "| :twisted_rightwards_arrows: Branch | '${branch}' |\\n" +
+                    "| :dart: Target | '${env.BASE_BRANCH}' |\\n" +
                     "| :zap: Triggered by | Jenkins push event |\\n\\n" +
                     "---\\n\\n" +
                     "### :bar_chart: Workbooks Queued for Testing\\n\\n" +
@@ -125,8 +125,7 @@ pipeline {
                     "> :bulb: If tests **pass** this PR will be automatically merged\\n" +
                     "> If tests **fail** this PR will be closed with full failure details\\n\\n" +
                     "---\\n" +
-                    "*:jenkins: This PR was automatically created by Jenkins CI/CD*"
-
+                    "*:robot: This PR was automatically created by Jenkins CI/CD*"
                   def prJson = "{\"title\":\"${prTitle}\",\"body\":\"${prBody}\",\"head\":\"${branch}\",\"base\":\"${env.BASE_BRANCH}\"}"
 
                   def prNumber = powershell(
@@ -206,12 +205,12 @@ pipeline {
               allPassed = false
               try {
                 def reportText = readFile file: "results\\${name}.json"
-                failureDetails << "| :bar_chart: \`${wb}\` | :x: Failed | ${reportText.take(150)} |"
+                failureDetails << "| :bar_chart: ${wb} | :x: Failed | ${reportText.take(150)} |"
               } catch (e) {
-                failureDetails << "| :bar_chart: \`${wb}\` | :x: Failed | Check Jenkins logs for details |"
+                failureDetails << "| :bar_chart: ${wb} | :x: Failed | Check Jenkins logs for details |"
               }
             } else {
-              passedList << "| :bar_chart: \`${wb}\` | :white_check_mark: Passed |"
+              passedList << "| :bar_chart: ${wb} | :white_check_mark: Passed |"
               echo "Tests passed for ${wb}"
             }
           }
@@ -256,7 +255,7 @@ pipeline {
               "---\\n" +
               "*:robot: Automatically merged by Jenkins CI/CD*\"}"
 
-            def mergeBody = "{\"commit_title\":\":rocket: CI: ${branch} -> ${env.BASE_BRANCH} — Wiiisdom tests passed\",\"commit_message\":\"All Wiiisdom tests passed successfully.\",\"merge_method\":\"merge\"}"
+            def mergeBody = "{\"commit_title\":\":rocket: CI: ${branch} -> ${env.BASE_BRANCH} - Wiiisdom tests passed\",\"commit_message\":\"All Wiiisdom tests passed successfully.\",\"merge_method\":\"merge\"}"
 
             echo "Merging PR #${env.PR_NUMBER}..."
             powershell """
@@ -309,7 +308,7 @@ pipeline {
               "### :wrench: Next Steps\\n\\n" +
               "1. :eyes: Review the failure details above\\n" +
               "2. :hammer: Fix the failing tests or workbook\\n" +
-              "3. :arrow_up: Push your changes to \`${branch}\` to trigger a new pipeline run\\n\\n" +
+              "3. :arrow_up: Push your changes to '${branch}' to trigger a new pipeline run\\n\\n" +
               "> :warning: This PR has been closed. A new PR will be created automatically on your next push.\\n\\n" +
               "---\\n" +
               "*:robot: Automatically closed by Jenkins CI/CD*\"}"
