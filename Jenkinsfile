@@ -33,7 +33,7 @@ pipeline {
             returnStdout: true
           ).trim()
           if (lastMessage.contains('[skip ci]')) {
-            echo "Skipping pipeline — checksums update commit detected"
+            echo "Skipping pipeline — skip ci commit detected"
             env.SKIP_CI = 'true'
           } else {
             env.SKIP_CI = 'false'
@@ -42,67 +42,42 @@ pipeline {
       }
     }
 
-    stage('Generate and Compare Checksums') {
+    stage('Detect Changed Workbooks') {
       when { expression { env.SKIP_CI != 'true' } }
       steps {
-        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
-          script {
-            def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
-            env.CURRENT_BRANCH = branch
+        script {
+          def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
+          env.CURRENT_BRANCH = branch
 
-            def raw = powershell(
-              script: '''
-                $changedWorkbooks = [System.Collections.Generic.List[string]]::new()
+          def raw = powershell(
+            script: '''
+              try {
+                # Get files changed in this commit vs previous
+                $changedFiles = & $env:GIT_EXE diff --name-only HEAD~1 HEAD 2>$null
 
-                $workbooks = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
-                if (-not $workbooks) {
-                  Write-Output ""
-                  exit 0
+                # Also check for new untracked workbook files added in this commit
+                $addedFiles = & $env:GIT_EXE diff --name-only --diff-filter=A HEAD~1 HEAD 2>$null
+
+                $allChanged = @()
+                if ($changedFiles) { $allChanged += $changedFiles }
+                if ($addedFiles)   { $allChanged += $addedFiles }
+
+                # Filter to only workbook files with version pattern e.g. "Session 1 v1.0.1.twb"
+                $workbooks = $allChanged | Sort-Object -Unique | Where-Object {
+                  $_ -match "workbooks[/\\\\].+ v[0-9]+\.[0-9]+\.[0-9]+\.(twbx?|twb)$"
                 }
 
-                $oldMap = @{}
-                if (Test-Path "checksums.txt") {
-                  Get-Content "checksums.txt" | ForEach-Object {
-                    $parts = $_ -split " {2}", 2
-                    if ($parts.Count -eq 2) { $oldMap[$parts[1].Trim()] = $parts[0].Trim() }
-                  }
-                }
-
-                $newLines = @()
-                foreach ($wb in $workbooks) {
-                  $hash = (Get-FileHash $wb.FullName -Algorithm SHA256).Hash.ToLower()
-                  $path = "workbooks/" + $wb.Name
-                  $newLines += "$hash  $path"
-
-                  if (-not $oldMap.ContainsKey($path) -or $oldMap[$path] -ne $hash) {
-                    $changedWorkbooks.Add($path)
-                  }
-                }
-
-                $newLines | Set-Content "checksums.txt"
-
-                if ($changedWorkbooks.Count -gt 0) { $changedWorkbooks -join "`n" } else { "" }
-              ''',
-              returnStdout: true
-            ).trim()
-
-            env.CHANGED_WORKBOOKS_RAW = raw
-            def count = raw ? raw.split('\n').length : 0
-            echo "Changed workbooks (${count}): ${raw}"
-
-            powershell """
-              & \$env:GIT_EXE config user.email "jenkins@ci"
-              & \$env:GIT_EXE config user.name "Jenkins CI"
-              & \$env:GIT_EXE add checksums.txt
-              \$status = & \$env:GIT_EXE status --porcelain
-              if (\$status) {
-                & \$env:GIT_EXE commit -m "ci: update checksums [skip ci]"
-                & \$env:GIT_EXE push https://\$env:GH_TOKEN@github.com/\$env:REPO.git HEAD:${branch}
-              } else {
-                Write-Host "No checksum changes to commit"
+                if ($workbooks) { $workbooks -join "`n" } else { "" }
+              } catch {
+                ""
               }
-            """
-          }
+            ''',
+            returnStdout: true
+          ).trim()
+
+          env.CHANGED_WORKBOOKS_RAW = raw
+          def count = raw ? raw.split('\n').length : 0
+          echo "Changed workbooks (${count}): ${raw}"
         }
       }
     }
@@ -130,8 +105,9 @@ pipeline {
                   env.PR_NUMBER = existingPR
                   echo "PR already exists: #${env.PR_NUMBER}"
                 } else {
+                  def workbookList = env.CHANGED_WORKBOOKS_RAW.trim().split('\n').collect { "- ${it.trim()}" }.join('\\n')
                   def prTitle = "CI: ${branch} -> ${env.BASE_BRANCH}"
-                  def prBody = "## Automated CI/CD Pipeline\\n\\n**Branch:** ${branch}\\n**Base:** ${env.BASE_BRANCH}\\n**Triggered by:** Jenkins push event\\n\\n---\\n\\n### What happens next\\n\\n- Wiiisdom tests will run against all changed workbooks\\n- If tests pass this PR will be automatically merged and workbooks published to Tableau Cloud\\n- If tests fail this PR will be closed with failure details\\n\\n---\\n*This PR was automatically created by Jenkins CI/CD*"
+                  def prBody = "## Automated CI/CD Pipeline\\n\\n**Branch:** ${branch}\\n**Base:** ${env.BASE_BRANCH}\\n**Triggered by:** Jenkins push event\\n\\n---\\n\\n### Workbooks to deploy\\n\\n${workbookList}\\n\\n---\\n\\n### What happens next\\n\\n- Wiiisdom tests will run against all changed workbooks\\n- If tests pass this PR will be automatically merged and workbooks published to Tableau Cloud\\n- If tests fail this PR will be closed with failure details\\n\\n---\\n*This PR was automatically created by Jenkins CI/CD*"
                   def prJson = "{\"title\":\"${prTitle}\",\"body\":\"${prBody}\",\"head\":\"${branch}\",\"base\":\"${env.BASE_BRANCH}\"}"
 
                   def prNumber = powershell(
@@ -182,10 +158,15 @@ pipeline {
             if (!wb) continue
 
             def filename = wb.tokenize('/\\').last()
-            def name = filename.replaceAll('\\.twbx?$', '')
+
+            // Strip version suffix e.g. "Session 1 v1.0.1.twb" -> "Session 1"
+            def name = filename.replaceAll(' v[0-9]+\\.[0-9]+\\.[0-9]+\\.twbx?$', '')
+                               .replaceAll('\\.twbx?$', '')
+
             def testFile = "wiiisdom\\${name}.json"
 
             echo "Processing workbook: ${wb}"
+            echo "Derived test name: ${name}"
             echo "Looking for test file: ${testFile}"
 
             if (!fileExists(testFile)) {
@@ -256,7 +237,7 @@ pipeline {
                 Write-Host "Branch updated — waiting for GitHub to process..."
                 Start-Sleep -Seconds 10
               } catch {
-                Write-Host "Branch already up to date or update not needed"
+                Write-Host "Branch already up to date"
               }
 
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/merge" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body '${mergeBody}'
