@@ -2,10 +2,10 @@ pipeline {
   agent any
 
   environment {
-    REPO               = 'Phoxxphire2309/wiiisdom-ci-cd'
-    GIT_EXE            = 'C:\\Program Files\\Git\\bin\\git.exe'
-    KINESIS_EXE        = 'C:\\Users\\Administrator\\Downloads\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\kinesis-cli\\kinesis'
-    WORKSPACE_DIR      = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
+    REPO          = 'Phoxxphire2309/wiiisdom-ci-cd'
+    GIT_EXE       = 'C:\\Program Files\\Git\\bin\\git.exe'
+    KINESIS_EXE   = 'C:\\Users\\Administrator\\Downloads\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\kinesis-cli\\kinesis'
+    WORKSPACE_DIR = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
   }
 
   stages {
@@ -75,7 +75,6 @@ pipeline {
           def allPassed = true
           def failureDetails = []
 
-          // Create results directory
           powershell 'New-Item -ItemType Directory -Force -Path "results" | Out-Null'
 
           for (wb in workbooks) {
@@ -98,18 +97,16 @@ pipeline {
 
             def result = powershell(
               script: """
-                & \$env:KINESIS_EXE --path \"\$env:WORKSPACE_DIR\\wiiisdom\" --output \"\$env:WORKSPACE_DIR\\results\" --headless \"${name}\"
+                & \$env:KINESIS_EXE --path \"\$env:WORKSPACE_DIR\\wiiisdom\" --output \"\$env:WORKSPACE_DIR\\results\" --headless -c \"\$env:WORKSPACE_DIR\\wiiisdom\\context.json\" \"${name}.json\"
               """,
               returnStatus: true
             )
 
             if (result != 0) {
               allPassed = false
-              // Try to read failure details from output report
-              def reportPath = "results\\${name}.json"
               try {
-                def reportText = readFile file: reportPath
-                failureDetails << "**${wb}**: ${reportText.take(200)}"
+                def reportText = readFile file: "results\\${name}.json"
+                failureDetails << "**${wb}**: ${reportText.take(300)}"
               } catch (e) {
                 failureDetails << "**${wb}**: Tests failed — check Jenkins logs for details"
               }
