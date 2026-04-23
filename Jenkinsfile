@@ -8,6 +8,7 @@ pipeline {
     WORKSPACE_DIR = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
     BROWSER_PATH  = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     BASE_BRANCH   = 'main'
+    SKIP_CI       = 'false'
   }
 
   stages {
@@ -33,14 +34,16 @@ pipeline {
           ).trim()
           if (lastMessage.contains('[skip ci]')) {
             echo "Skipping pipeline — checksums update commit detected"
-            currentBuild.result = 'SUCCESS'
-            error('skip')
+            env.SKIP_CI = 'true'
+          } else {
+            env.SKIP_CI = 'false'
           }
         }
       }
     }
 
     stage('Generate and Compare Checksums') {
+      when { expression { env.SKIP_CI != 'true' } }
       steps {
         withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
           script {
@@ -105,6 +108,7 @@ pipeline {
     }
 
     stage('Create Pull Request') {
+      when { expression { env.SKIP_CI != 'true' } }
       steps {
         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
           withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
@@ -151,6 +155,7 @@ pipeline {
     }
 
     stage('Set Pending Status') {
+      when { expression { env.SKIP_CI != 'true' } }
       steps {
         withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
           powershell '''
@@ -162,7 +167,7 @@ pipeline {
     }
 
     stage('Run Wiiisdom Tests') {
-      when { expression { env.CHANGED_WORKBOOKS_RAW?.trim() } }
+      when { expression { env.SKIP_CI != 'true' && env.CHANGED_WORKBOOKS_RAW?.trim() } }
       steps {
         script {
           def workbooks = env.CHANGED_WORKBOOKS_RAW.trim().split('\n')
@@ -221,8 +226,12 @@ pipeline {
 
   post {
     success {
-      withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
-        script {
+      script {
+        if (env.SKIP_CI == 'true') {
+          echo "Skip CI build — no post actions needed"
+          return
+        }
+        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
           powershell '''
             $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GH_TOKEN"; "Content-Type"="application/json" } -Body $body
@@ -246,8 +255,12 @@ pipeline {
     }
 
     failure {
-      withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
-        script {
+      script {
+        if (env.SKIP_CI == 'true') {
+          echo "Skip CI build — no post actions needed"
+          return
+        }
+        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
           def details = env.FAILURE_DETAILS ?: '| Unknown | FAILED | Check Jenkins build logs |'
           def branch = env.CURRENT_BRANCH ?: 'development'
 
@@ -272,7 +285,7 @@ pipeline {
     }
 
     aborted {
-      echo "Pipeline skipped — checksums only commit or no changes detected"
+      echo "Pipeline aborted"
     }
   }
 }
