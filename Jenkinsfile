@@ -7,6 +7,7 @@ pipeline {
     KINESIS_EXE   = 'C:\\Users\\Administrator\\Downloads\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\kinesis-cli\\kinesis'
     WORKSPACE_DIR = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
     BROWSER_PATH  = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+    BASE_BRANCH   = 'main'
   }
 
   stages {
@@ -25,6 +26,48 @@ pipeline {
             returnStdout: true
           ).trim()
           echo "Commit SHA: ${env.COMMIT_SHA}"
+        }
+      }
+    }
+
+    stage('Create Pull Request') {
+      steps {
+        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
+          script {
+            def branch = powershell(
+              script: '& $env:GIT_EXE rev-parse --abbrev-ref HEAD',
+              returnStdout: true
+            ).trim()
+            echo "Current branch: ${branch}"
+
+            // Only create PR if not already on base branch
+            if (branch != env.BASE_BRANCH) {
+              def prBody = """
+                {
+                  "title": "Automated: ${branch}",
+                  "body": "Automatically created by Jenkins pipeline. Wiiisdom tests running...",
+                  "head": "${branch}",
+                  "base": "${env.BASE_BRANCH}"
+                }
+              """
+              def prResponse = powershell(
+                script: """
+                  \$body = '{ "title": "Automated: ${branch}", "body": "Automatically created by Jenkins pipeline. Wiiisdom tests running...", "head": "${branch}", "base": "${env.BASE_BRANCH}" }'
+                  \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
+                  \$response.number
+                """,
+                returnStdout: true
+              ).trim()
+
+              // Handle case where PR already exists
+              if (prResponse) {
+                env.PR_NUMBER = prResponse
+                echo "Created PR #${env.PR_NUMBER}"
+              }
+            } else {
+              echo "On base branch — skipping PR creation"
+            }
+          }
         }
       }
     }
@@ -126,10 +169,28 @@ pipeline {
   post {
     success {
       withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
-        powershell '''
-          $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GH_TOKEN"; "Content-Type"="application/json" } -Body $body
-        '''
+        script {
+          // Post success status
+          powershell '''
+            $body = '{"state":"success","context":"wiiisdom-tests","description":"All Wiiisdom tests passed. Published to Tableau Cloud."}'
+            Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/statuses/$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token $env:GH_TOKEN"; "Content-Type"="application/json" } -Body $body
+          '''
+
+          // Merge and close PR if one was created
+          if (env.PR_NUMBER) {
+            echo "Merging PR #${env.PR_NUMBER}..."
+            powershell """
+              # Add success comment
+              \$comment = '{"body":"## Wiiisdom Tests: PASSED ✅\\n\\nAll tests passed. Merging automatically."}'
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
+
+              # Merge the PR
+              \$merge = '{"commit_title":"Auto-merged by Jenkins after Wiiisdom tests passed","merge_method":"merge"}'
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/merge" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$merge
+            """
+            echo "PR #${env.PR_NUMBER} merged successfully"
+          }
+        }
       }
     }
 
@@ -137,17 +198,26 @@ pipeline {
       withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
         script {
           def details = (env.FAILURE_DETAILS ?: 'Pipeline failed — check Jenkins build logs.').replace('"', '\\"')
+
+          // Post failure status
           powershell """
             \$body = '{"state":"failure","context":"wiiisdom-tests","description":"Wiiisdom tests FAILED. Merge blocked."}'
             Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/statuses/\$env:COMMIT_SHA" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
           """
 
-          if (env.CHANGE_ID) {
-            def comment = "## Wiiisdom Test Results: FAILED\\n\\nThe following workbooks failed:\\n\\n${details}\\n\\n**This PR has NOT been merged.**"
+          // Comment on PR and close it if one was created
+          if (env.PR_NUMBER) {
+            echo "Closing PR #${env.PR_NUMBER} due to test failure..."
             powershell """
-              \$body = '{"body":"${comment}"}'
-              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:CHANGE_ID/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
+              # Add failure comment
+              \$comment = '{"body":"## Wiiisdom Tests: FAILED ❌\\n\\nThe following workbooks failed their tests:\\n\\n${details}\\n\\n**This PR has been closed. Please fix the failing tests and push again.**"}'
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
+
+              # Close the PR
+              \$close = '{"state":"closed"}'
+              Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER" -Method PATCH -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$close
             """
+            echo "PR #${env.PR_NUMBER} closed"
           }
         }
       }
