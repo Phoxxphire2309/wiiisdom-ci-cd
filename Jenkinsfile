@@ -6,6 +6,7 @@ pipeline {
     GIT_EXE       = 'C:\\Program Files\\Git\\bin\\git.exe'
     KINESIS_EXE   = 'C:\\Users\\Administrator\\Downloads\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\Wiiisdom-for-Tableau-bundle-2026.2-win32\\kinesis-cli\\kinesis'
     WORKSPACE_DIR = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Initial Wiiisdom Test Build'
+    BROWSER_PATH  = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   }
 
   stages {
@@ -97,7 +98,7 @@ pipeline {
 
             def result = powershell(
               script: """
-                & \$env:KINESIS_EXE --path \"\$env:WORKSPACE_DIR\\wiiisdom\" --output \"\$env:WORKSPACE_DIR\\results\" --headless -c \"\$env:WORKSPACE_DIR\\wiiisdom\\context.json\" \"${name}.json\"
+                & \$env:KINESIS_EXE --canvas-timeout=60 --path \"\$env:WORKSPACE_DIR\\wiiisdom\\${name}.json\" --output \"\$env:WORKSPACE_DIR\\results\" --context-vars \"\$env:WORKSPACE_DIR\\wiiisdom\\context.json\" --accept-language en-US --max-data-rows 250 --nousagedata --driver-name edgedriver --browser-path \"\$env:BROWSER_PATH\" --headless
               """,
               returnStatus: true
             )

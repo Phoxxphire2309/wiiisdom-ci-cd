@@ -12,7 +12,7 @@
       "type": "viz_open",
       "disabled": false,
       "name": "Open Viz",
-      "url": "[\"{{TABLEAU_URL}}/t/{{TABLEAU_SITE}}/views/FHLBSession1/AccountBalances\",\"{{TABLEAU_URL}}/t/{{TABLEAU_SITE}}/views/FHLBSession1/MonthlyKPIOverview\"]"
+      "url": "[\"{{TABLEAU_URL}}/t/{{TABLEAU_SITE}}/views/FHLBSession1/MonthlyKPIOverview\"]"
     },
     {
       "type": "set_filter_list",
