@@ -52,19 +52,17 @@ pipeline {
           def raw = powershell(
             script: '''
               try {
-                # Get files changed in this commit vs previous
                 $changedFiles = & $env:GIT_EXE diff --name-only HEAD~1 HEAD 2>$null
-
-                # Also check for new untracked workbook files added in this commit
                 $addedFiles = & $env:GIT_EXE diff --name-only --diff-filter=A HEAD~1 HEAD 2>$null
 
                 $allChanged = @()
                 if ($changedFiles) { $allChanged += $changedFiles }
                 if ($addedFiles)   { $allChanged += $addedFiles }
 
-                # Filter to only workbook files with version pattern e.g. "Session 1 v1.0.1.twb"
                 $workbooks = $allChanged | Sort-Object -Unique | Where-Object {
-                  $_ -match "workbooks[/\\\\].+ v[0-9]+\.[0-9]+\.[0-9]+\.(twbx?|twb)$"
+                  $_ -like "workbooks*" -and (
+                    $_ -like "*.twb" -or $_ -like "*.twbx"
+                  ) -and $_ -match " v\d+\.\d+\.\d+"
                 }
 
                 if ($workbooks) { $workbooks -join "`n" } else { "" }
