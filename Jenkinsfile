@@ -26,6 +26,87 @@ pipeline {
             returnStdout: true
           ).trim()
           echo "Commit SHA: ${env.COMMIT_SHA}"
+
+          // Skip pipeline if this is a checksums-only commit from Jenkins
+          def lastMessage = powershell(
+            script: '& $env:GIT_EXE log -1 --pretty=%B',
+            returnStdout: true
+          ).trim()
+          if (lastMessage.contains('[skip ci]')) {
+            echo "Skipping pipeline — checksums update commit detected"
+            currentBuild.result = 'SUCCESS'
+            error('skip')
+          }
+        }
+      }
+    }
+
+    stage('Generate and Compare Checksums') {
+      steps {
+        withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
+          script {
+            def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
+            env.CURRENT_BRANCH = branch
+
+            def raw = powershell(
+              script: '''
+                $changedWorkbooks = [System.Collections.Generic.List[string]]::new()
+
+                # Get all current workbooks
+                $workbooks = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
+                if (-not $workbooks) {
+                  Write-Output ""
+                  exit 0
+                }
+
+                # Load existing checksums if they exist
+                $oldMap = @{}
+                if (Test-Path "checksums.txt") {
+                  Get-Content "checksums.txt" | ForEach-Object {
+                    $parts = $_ -split "\s+", 2
+                    if ($parts.Count -eq 2) { $oldMap[$parts[1].Trim()] = $parts[0].Trim() }
+                  }
+                }
+
+                # Compute new checksums and compare
+                $newLines = @()
+                foreach ($wb in $workbooks) {
+                  $hash = (Get-FileHash $wb.FullName -Algorithm SHA256).Hash.ToLower()
+                  $path = "workbooks/" + $wb.Name
+                  $newLines += "$hash  $path"
+
+                  # Check if changed or new
+                  if (-not $oldMap.ContainsKey($path) -or $oldMap[$path] -ne $hash) {
+                    $changedWorkbooks.Add($path)
+                  }
+                }
+
+                # Write updated checksums file
+                $newLines | Set-Content "checksums.txt"
+
+                if ($changedWorkbooks.Count -gt 0) { $changedWorkbooks -join "`n" } else { "" }
+              ''',
+              returnStdout: true
+            ).trim()
+
+            env.CHANGED_WORKBOOKS_RAW = raw
+            def count = raw ? raw.split('\n').length : 0
+            echo "Changed workbooks (${count}): ${raw}"
+
+            // Commit updated checksums back to repo
+            powershell """
+              & \$env:GIT_EXE config user.email "jenkins@ci"
+              & \$env:GIT_EXE config user.name "Jenkins CI"
+              & \$env:GIT_EXE add checksums.txt
+              \$status = & \$env:GIT_EXE status --porcelain
+              if (\$status) {
+                & \$env:GIT_EXE commit -m "ci: update checksums [skip ci]"
+                & \$env:GIT_EXE push https://\$env:GH_TOKEN@github.com/\$env:REPO.git HEAD:${branch}
+              } else {
+                Write-Host "No checksum changes to commit"
+              }
+            """
+          }
         }
       }
     }
@@ -35,8 +116,7 @@ pipeline {
         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
           withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
             script {
-              def branch = env.GIT_BRANCH?.replace('origin/', '') ?: 'development'
-              echo "Current branch: ${branch}"
+              def branch = env.CURRENT_BRANCH ?: 'development'
 
               if (branch != env.BASE_BRANCH) {
                 // Check if PR already exists
@@ -56,7 +136,7 @@ pipeline {
                 } else {
                   def prNumber = powershell(
                     script: """
-                      \$body = '{"title":"Automated: ${branch}","body":"Automatically created by Jenkins pipeline. Wiiisdom tests running...","head":"${branch}","base":"${env.BASE_BRANCH}"}'
+                      \$body = '{"title":":rocket: ${branch} -> ${env.BASE_BRANCH}","body":"## :robot: Automated CI/CD Pipeline\\n\\n**Branch:** \`${branch}\`\\n**Base:** \`${env.BASE_BRANCH}\`\\n**Triggered by:** Jenkins push event\\n\\n---\\n\\n### :clipboard: What happens next\\n\\n- Wiiisdom tests will run against all changed workbooks\\n- If tests **pass** this PR will be automatically merged and workbooks published to Tableau Cloud\\n- If tests **fail** this PR will be closed with failure details\\n\\n---\\n*This PR was automatically created by Jenkins CI/CD*","head":"${branch}","base":"${env.BASE_BRANCH}"}'
                       \$response = Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$body
                       \$response.number
                     """,
@@ -85,34 +165,6 @@ pipeline {
       }
     }
 
-    stage('Detect Changed Workbooks') {
-      steps {
-        script {
-          def raw = powershell(
-            script: '''
-              try {
-                $files = & $env:GIT_EXE diff --name-only HEAD~1 HEAD
-                $workbooks = $files | Where-Object { $_ -match "\\.twbx?$" }
-                if ($workbooks) {
-                  $workbooks -join "`n"
-                } else {
-                  $all = Get-ChildItem -Path "workbooks" -Filter "*.twb*" -ErrorAction SilentlyContinue
-                  if ($all) { ($all | ForEach-Object { "workbooks\\" + $_.Name }) -join "`n" } else { "" }
-                }
-              } catch {
-                ""
-              }
-            ''',
-            returnStdout: true
-          ).trim()
-
-          env.CHANGED_WORKBOOKS_RAW = raw
-          def count = raw ? raw.split('\n').length : 0
-          echo "Changed workbooks (${count}): ${raw}"
-        }
-      }
-    }
-
     stage('Run Wiiisdom Tests') {
       when { expression { env.CHANGED_WORKBOOKS_RAW?.trim() } }
       steps {
@@ -120,6 +172,7 @@ pipeline {
           def workbooks = env.CHANGED_WORKBOOKS_RAW.trim().split('\n')
           def allPassed = true
           def failureDetails = []
+          def passedList = []
 
           powershell 'New-Item -ItemType Directory -Force -Path "results" | Out-Null'
 
@@ -152,17 +205,19 @@ pipeline {
               allPassed = false
               try {
                 def reportText = readFile file: "results\\${name}.json"
-                failureDetails << "**${wb}**: ${reportText.take(300)}"
+                failureDetails << "| \`${wb}\` | :x: Failed | ${reportText.take(150)} |"
               } catch (e) {
-                failureDetails << "**${wb}**: Tests failed — check Jenkins logs for details"
+                failureDetails << "| \`${wb}\` | :x: Failed | Check Jenkins logs for details |"
               }
             } else {
+              passedList << "| \`${wb}\` | :white_check_mark: Passed | Published to Tableau Cloud |"
               echo "Tests passed for ${wb}"
             }
           }
 
           env.ALL_PASSED      = allPassed ? 'true' : 'false'
           env.FAILURE_DETAILS = failureDetails.join('\n')
+          env.PASSED_DETAILS  = passedList.join('\n')
         }
       }
     }
@@ -180,12 +235,14 @@ pipeline {
 
           // Merge and close PR if one was created
           if (env.PR_NUMBER) {
+            def branch = env.CURRENT_BRANCH ?: 'development'
+            def passed = env.PASSED_DETAILS ?: '| No workbooks changed | - | - |'
             echo "Merging PR #${env.PR_NUMBER}..."
             powershell """
-              \$comment = '{"body":"## Wiiisdom Tests: PASSED ✅\\n\\nAll tests passed. Merging automatically."}'
+              \$comment = '{"body":"## :white_check_mark: Wiiisdom Tests Passed\\n\\nAll tests passed successfully. This PR has been automatically merged and workbooks published to Tableau Cloud.\\n\\n### Results\\n\\n| Workbook | Status | Action |\\n|----------|--------|--------|\\n${passed}\\n\\n---\\n*Automatically merged by Jenkins CI/CD*"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
 
-              \$merge = '{"commit_title":"Auto-merged by Jenkins after Wiiisdom tests passed","merge_method":"merge"}'
+              \$merge = '{"commit_title":":rocket: ${branch} -> ${env.BASE_BRANCH}: Wiiisdom tests passed","commit_message":"All Wiiisdom tests passed. Workbooks published to Tableau Cloud.","merge_method":"squash"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/pulls/\$env:PR_NUMBER/merge" -Method PUT -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$merge
             """
             echo "PR #${env.PR_NUMBER} merged successfully"
@@ -197,7 +254,8 @@ pipeline {
     failure {
       withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GH_TOKEN')]) {
         script {
-          def details = (env.FAILURE_DETAILS ?: 'Pipeline failed — check Jenkins build logs.').replace('"', '\\"')
+          def details = env.FAILURE_DETAILS ?: '| Unknown | :x: Failed | Check Jenkins build logs |'
+          def branch = env.CURRENT_BRANCH ?: 'development'
 
           // Post failure status
           powershell """
@@ -209,7 +267,7 @@ pipeline {
           if (env.PR_NUMBER) {
             echo "Closing PR #${env.PR_NUMBER} due to test failure..."
             powershell """
-              \$comment = '{"body":"## Wiiisdom Tests: FAILED ❌\\n\\nThe following workbooks failed their tests:\\n\\n${details}\\n\\n**This PR has been closed. Please fix the failing tests and push again.**"}'
+              \$comment = '{"body":"## :x: Wiiisdom Tests Failed\\n\\nOne or more Wiiisdom tests failed. This PR has been closed automatically.\\n\\n### Failed Workbooks\\n\\n| Workbook | Status | Details |\\n|----------|--------|---------|\\n${details}\\n\\n### :wrench: Next Steps\\n\\n1. Review the failure details above\\n2. Fix the failing tests or workbook\\n3. Push your changes to \`${branch}\` to trigger a new pipeline run\\n\\n---\\n*Automatically closed by Jenkins CI/CD*"}'
               Invoke-RestMethod -Uri "https://api.github.com/repos/\$env:REPO/issues/\$env:PR_NUMBER/comments" -Method POST -Headers @{ Authorization="token \$env:GH_TOKEN"; "Content-Type"="application/json" } -Body \$comment
 
               \$close = '{"state":"closed"}'
@@ -219,6 +277,10 @@ pipeline {
           }
         }
       }
+    }
+
+    aborted {
+      echo "Pipeline skipped — no changes detected or skip ci commit"
     }
   }
 }
